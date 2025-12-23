@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Attendance Tracker</title>
+  <style>
+    body { font-family: Arial; margin: 30px; }
+    input, select, button { margin: 5px; padding: 6px; }
+    .hidden { display: none; }
+    li { cursor: pointer; margin: 6px 0; }
+    .box { border: 1px solid #ccc; padding: 15px; margin-top: 15px; }
+  </style>
+</head>
+<body>
+
+<h2>Registration / Login</h2>
+<input id="name" placeholder="Full Name">
+<input id="email" placeholder="Email">
+<input id="password" type="password" placeholder="Password">
+<br>
+<button onclick="register()">Register</button>
+<button onclick="login()">Login</button>
+<button onclick="logout()">Logout</button>
+
+<hr>
+
+<h2>Student Attendance</h2>
+<h3 style="display: none;" id="ld"></h3>
+<p id="msg">login with your email and password to see the students record....</p>
+<ul id="studentsList"></ul>
+
+<div id="attendanceBox" class="box hidden">
+  <h3 id="studentTitle"></h3>
+
+  <div id="addBox" class="hidden">
+    <input id="subject" placeholder="Subject">
+    <input id="date" type="date">
+    <select id="status">
+      <option value="Present">Present</option>
+      <option value="Absent">Absent</option>
+    </select>
+    <button onclick="addAttendance()">Add Attendance</button>
+  </div>
+
+  <ul id="attendanceList"></ul>
+</div>
+
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
+  import {
+    getAuth,
+    createUserWithEmailAndPassword,
+    signInWithEmailAndPassword,
+    signOut,
+    onAuthStateChanged
+  } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js";
+  import {
+    getFirestore,
+    collection,
+    addDoc,
+    doc,
+    setDoc,
+    onSnapshot,
+    query,
+    where,
+    updateDoc
+  } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore.js";
+
+  // 🔴 Replace with your Firebase config
+  const firebaseConfig = {
+    apiKey: "AIzaSyDy4VHGrpE6qX-Xk6kMAoRoX-OumRzJ1RA",
+    authDomain: "attendence-d241b.firebaseapp.com",
+    projectId: "attendence-d241b",
+    storageBucket: "attendence-d241b.firebasestorage.app",
+    messagingSenderId: "359446407208",
+    appId: "1:359446407208:web:c20d4bfd98e258f431ed1d",
+    measurementId: "G-197JM28NLK"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const auth = getAuth();
+  const db = getFirestore();
+
+  let currentUser = null;
+  let selectedStudent = null;
+
+  // ---------- AUTH ----------
+  window.register = async () => {
+    const studentName = document.getElementById("name").value.trim();
+    const studentEmail = document.getElementById("email").value.trim();
+    const studentPassword = document.getElementById("password").value.trim();
+
+    if (!studentName || !studentEmail || !studentPassword) {
+      alert("Please enter Name, Email, and Password");
+      return;
+    }
+
+    try {
+      const cred = await createUserWithEmailAndPassword(auth, studentEmail, studentPassword);
+      await setDoc(doc(db, "users", cred.user.uid), {
+        uid: cred.user.uid,
+        name: studentName
+      });
+      alert("Registered successfully. You can now login.");
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
+  window.login = async () => {
+    const studentEmail = document.getElementById("email").value.trim();
+    const studentPassword = document.getElementById("password").value.trim();
+
+    if (!studentEmail || !studentPassword) {
+      alert("Please enter Email and Password");
+      return;
+    }
+
+    try {
+      await signInWithEmailAndPassword(auth, studentEmail, studentPassword);
+      // onAuthStateChanged will handle UI updates
+       window.location.reload();
+    //   document.getElementById("msg").style.display="none";
+
+    //   document.getElementById("ld").style.display = "block";
+    //   document.getElementById("ld").innerText = `${studentEmail}`
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
+  window.logout = async () => {
+    await signOut(auth);
+    // onAuthStateChanged will handle UI updates
+     window.location.reload();
+
+  };
+
+  // ---------- Track login/logout and update UI ----------
+  onAuthStateChanged(auth, (user) => {
+    currentUser = user;
+
+    const addBox = document.getElementById("addBox");
+    const attendanceList = document.getElementById("attendanceList");
+    const msg = document.getElementById("msg");
+    const ld = document.getElementById("ld");
+
+
+    if (user) {
+      console.log("Logged in as:", user.email);
+      alert("Logged in as: " + user.email);
+
+      ld.style.display = "block";
+      ld.innerText = `Logged in as: ${user.email}`;
+      msg.style.display = "none";
+
+      // Show Add Attendance only if the logged-in user is the selected student
+      if (selectedStudent && selectedStudent === currentUser.uid) {
+        addBox.classList.remove("hidden");
+      } else {
+        addBox.classList.add("hidden");
+      }
+
+      // Refresh attendance list to show edit buttons for the logged-in user
+      if (selectedStudent) loadAttendance();
+
+    } else {
+      console.log("Logged out");
+      alert("Logged out");
+
+      ld.style.display = "none";
+      msg.style.display = "block";
+
+      // Hide Add Attendance section
+      addBox.classList.add("hidden");
+
+      // Remove all edit buttons
+      attendanceList.querySelectorAll("button").forEach(btn => btn.remove());
+    }
+  });
+
+  // ---------- STUDENTS LIST ----------
+  onSnapshot(collection(db, "users"), snap => {
+    const studentsList = document.getElementById("studentsList");
+    studentsList.innerHTML = "";
+    snap.forEach(d => {
+      const user = d.data();
+      studentsList.innerHTML += `
+        <li onclick="openAttendance('${user.uid}','${user.name}')">
+          ${user.name}
+        </li>`;
+    });
+  });
+
+
+  // ---------- OPEN ATTENDANCE ----------
+  window.openAttendance = (uid, name) => {
+    selectedStudent = uid;
+    const studentTitle = document.getElementById("studentTitle");
+    const attendanceBox = document.getElementById("attendanceBox");
+    const addBox = document.getElementById("addBox");
+
+    studentTitle.innerText = name + "'s Attendance";
+    attendanceBox.classList.remove("hidden");
+
+    // Show add box only if logged-in student matches
+    addBox.classList.toggle("hidden", !currentUser || currentUser.uid !== uid);
+
+    loadAttendance();
+  };
+
+  // ---------- LOAD ATTENDANCE ----------
+  function loadAttendance() {
+    const attendanceList = document.getElementById("attendanceList");
+    const q = query(collection(db, "attendance"), where("userId", "==", selectedStudent));
+
+    onSnapshot(q, snap => {
+      attendanceList.innerHTML = "";
+      snap.forEach(d => {
+        const a = d.data();
+        const owner = currentUser && currentUser.uid === a.userId;
+        attendanceList.innerHTML += `
+          <li>
+            ${a.subject} | ${a.date} | ${a.status}
+            ${owner ? `<button onclick="edit('${d.id}','${a.status}')">Edit</button>` : ""}
+          </li>`;
+      });
+    });
+  }
+
+  // ---------- ADD ATTENDANCE ----------
+  window.addAttendance = async () => {
+    if (!currentUser) {
+      alert("You must be logged in to add attendance!");
+      return;
+    }
+
+    const subject = document.getElementById("subject").value.trim();
+    const date = document.getElementById("date").value;
+    const status = document.getElementById("status").value;
+
+    if (!subject || !date) {
+      alert("Please enter Subject and Date");
+      return;
+    }
+
+    await addDoc(collection(db, "attendance"), {
+      userId: currentUser.uid,
+      subject,
+      date,
+      status
+    });
+
+    document.getElementById("subject").value = "";
+    document.getElementById("date").value = "";
+  };
+
+  // ---------- EDIT ATTENDANCE ----------
+  window.edit = async (id, oldStatus) => {
+    const newStatus = prompt("Enter Present / Absent", oldStatus);
+    if (!newStatus) return;
+
+    await updateDoc(doc(db, "attendance", id), { status: newStatus });
+  };
+</script>
+
+</body>
+</html>
